@@ -1,0 +1,228 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: ELB with Auto Scaling Group Template
+Parameters:
+  ProjectName:
+    Default: Moodle
+    Description: The name of the project or task
+    Type: String
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: "[a-zA-Z][-a-zA-Z0-9]*"
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  InstanceType:
+    Description: Select EC2 instance type
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t1.micro
+      - t2.nano
+      - t2.micro
+      - t2.small
+      - t2.medium
+      - t2.large
+      - m1.small
+      - m1.medium
+      - m1.large
+      - m1.xlarge
+      - m2.xlarge
+      - m2.2xlarge
+      - m2.4xlarge
+      - m3.medium
+      - m3.large
+      - m3.xlarge
+      - m3.2xlarge
+      - m4.large
+      - m4.xlarge
+      - m4.2xlarge
+      - m4.4xlarge
+      - m4.10xlarge
+      - c1.medium
+      - c1.xlarge
+      - c3.large
+      - c3.xlarge
+      - c3.2xlarge
+      - c3.4xlarge
+      - c3.8xlarge
+      - c4.large
+      - c4.xlarge
+      - c4.2xlarge
+      - c4.4xlarge
+      - c4.8xlarge
+      - g2.2xlarge
+      - g2.8xlarge
+      - r3.large
+      - r3.xlarge
+      - r3.2xlarge
+      - r3.4xlarge
+      - r3.8xlarge
+      - i2.xlarge
+      - i2.2xlarge
+      - i2.4xlarge
+      - i2.8xlarge
+      - d2.xlarge
+      - d2.2xlarge
+      - d2.4xlarge
+      - d2.8xlarge
+      - hi1.4xlarge
+      - hs1.8xlarge
+      - cr1.8xlarge
+      - cc2.8xlarge
+      - cg1.4xlarge
+    ConstraintDescription: must be a valid EC2 instance type.
+  KeyPair:
+    Description: Amazon EC2 Key Pair
+    Type: AWS::EC2::KeyPair::KeyName
+  VpcId:
+    Description: Enter the VpcId
+    Type: AWS::EC2::VPC::Id
+  SubnetIds:
+    Description: Enter the Subnets
+    Type: List<AWS::EC2::Subnet::Id>
+  DBHost:
+    Description: "The existing database host"
+    Type: String
+  DBPort:
+    Default: 3306
+    Description: "The existing database port"
+    Type: String
+  DBUser:
+    Description: "The existing database user"
+    Type: String
+  DBPass:
+    NoEcho: true
+    Description: "The existing database password"
+    Type: String
+  DBName:
+    Description: "The existing database name"
+    Type: String
+Mappings:
+  RegionMap:
+    us-west-2:
+      AMI: ami-01f08ef3e76b957e5
+    ap-southeast-1:
+      AMI: ami-0dff4318d85149d5d
+
+Resources:
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AvailabilityZones: !GetAZs ""
+      LaunchConfigurationName: !Ref "LaunchConfiguration"
+      MinSize: "1"
+      MaxSize: "3"
+      LoadBalancerNames: [!Ref "ElasticLoadBalancer"]
+      Tags:
+        - Key: ProjectName
+          Value: !Ref ProjectName
+          PropagateAtLaunch: true
+        - Key: Name
+          Value: !Join
+            - "-"
+            - - !Ref ProjectName
+              - AutoScalingGroup
+          PropagateAtLaunch: true
+  ElasticLoadBalancer:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Properties:
+      AvailabilityZones: !GetAZs
+      CrossZone: true
+      Listeners:
+        - LoadBalancerPort: "80"
+          InstancePort: "80"
+          Protocol: HTTP
+      HealthCheck:
+        Target: HTTP:80/
+        HealthyThreshold: "3"
+        UnhealthyThreshold: "5"
+        Interval: "30"
+        Timeout: "5"
+      Tags:
+        - Key: ProjectName
+          Value: !Ref ProjectName
+        - Key: Name
+          Value: !Join
+            - "-"
+            - - !Ref ProjectName
+              - ElasticLoadBalancer
+  LaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Metadata:
+      Comment: Install docker
+      AWS::CloudFormation::Init:
+        config:
+          packages:
+            yum:
+              docker: []
+          commands:
+            01_create_service:
+              command: "service docker start"
+            02_add_ec2-user_user_to_docker_group:
+              command: "usermod -aG docker ec2-user"
+            03_run_docker_image:
+              command: !Join
+                - " "
+                - - "docker run -d --name moodle"
+                  - "-p 80:80"
+                  - "-p 443:443"
+                  - "-e MOODLE_SKIP_INSTALL=yes"
+                  - !Sub "-e MARIADB_HOST=${DBHost}"
+                  - !Sub "-e MARIADB_PORT_NUMBER=${DBPort}"
+                  - !Sub "-e MOODLE_DATABASE_USER=${DBUser}"
+                  - !Sub "-e MOODLE_DATABASE_PASSWORD=${DBPass}"
+                  - !Sub "-e MOODLE_DATABASE_NAME=${DBName}"
+                  - "--volume moodle_data:/bitnami"
+                  - "bitnami/moodle:latest"
+    Properties:
+      LaunchConfigurationName: !Join
+        - "-"
+        - - !Ref ProjectName
+          - LaunchConfiguration
+      KeyName: !Ref KeyPair
+      InstanceType: !Ref InstanceType
+      SecurityGroups:
+        - !Ref InstanceSecurityGroup
+      ImageId:
+        Fn::FindInMap:
+          - RegionMap
+          - !Ref AWS::Region
+          - AMI
+      UserData:
+        "Fn::Base64": !Sub |
+          #!/bin/bash -xe                        
+          # Ensure AWS CFN Bootstrap is the latest
+          yum install -y aws-cfn-bootstrap
+          # Install the files and packages from the metadata
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource LaunchConfiguration --region ${AWS::Region}
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Join
+        - "-"
+        - - !Ref ProjectName
+          - InstanceSecurityGroup
+      GroupDescription: Enable SSH access and HTTP from the load balancer only
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupOwnerId:
+            !GetAtt [ElasticLoadBalancer, SourceSecurityGroup.OwnerAlias]
+          SourceSecurityGroupName:
+            !GetAtt [ElasticLoadBalancer, SourceSecurityGroup.GroupName]
+      Tags:
+        - Key: ProjectName
+          Value: !Ref ProjectName
+        - Key: Name
+          Value: !Join
+            - "-"
+            - - !Ref ProjectName
+              - InstanceSecurityGroup
+
+Outputs:
+  URL:
+    Description: "LoadBalancer Endpoint"
+    Value: !Join ["", ["http://", !GetAtt [ElasticLoadBalancer, DNSName]]]

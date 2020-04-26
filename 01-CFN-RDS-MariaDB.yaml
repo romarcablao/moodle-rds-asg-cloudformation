@@ -1,0 +1,130 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: RDS MariaDB Template
+Parameters:
+  VpcId:
+    Type: "AWS::EC2::VPC::Id"
+    Description: VpcId of your existing Virtual Private Cloud (VPC)
+    ConstraintDescription: must be the VPC Id of an existing Virtual Private Cloud.
+  SubnetId:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Choose available private subnets
+  ProjectName:
+    Default: Moodle
+    Description: The name of the project or task
+    Type: String
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: "[a-zA-Z][-a-zA-Z0-9]*"
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  DBInstanceClass:
+    Description: The database instance type
+    Type: String
+    Default: db.t2.micro
+    AllowedValues:
+      - db.t2.micro
+      - db.t3.small
+      - db.t3.medium
+    ConstraintDescription: must select a valid database instance type.
+  DBAllocatedStorage:
+    Description: The database allocated storage
+    Type: String
+    Default: 5
+    AllowedPattern: "[0-9]*"
+    ConstraintDescription: must indicate database storage size
+  MasterUser:
+    Default: admin
+    Description: The database admin account username
+    Type: String
+    MinLength: 1
+    MaxLength: 16
+    AllowedPattern: "[a-zA-Z][a-zA-Z0-9]*"
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  MasterUserPassword:
+    NoEcho: true
+    Description: The database admin account password
+    Type: String
+    MinLength: 8
+    MaxLength: 64
+    AllowedPattern: "[a-zA-Z0-9]*"
+    ConstraintDescription: must contain only alphanumeric characters.
+  MultiAZDatabase:
+    Default: false
+    Description: Create a Multi-AZ MariaDB Amazon RDS database instance
+    Type: String
+    AllowedValues:
+      - true
+      - false
+    ConstraintDescription: must be either true or false.
+
+Resources:
+  MariaDBDatabase:
+    Type: "AWS::RDS::DBInstance"
+    Properties:
+      DBName: moodle
+      Engine: MariaDB
+      AllocatedStorage: !Ref DBAllocatedStorage
+      MultiAZ: !Ref MultiAZDatabase
+      MasterUsername: !Ref MasterUser
+      MasterUserPassword: !Ref MasterUserPassword
+      DBInstanceIdentifier: !Join
+        - "-"
+        - - !Ref ProjectName
+          - MariaDBDatabase
+      DBInstanceClass: !Ref DBInstanceClass
+      DBSubnetGroupName: !Ref MariaDBSubnetGroup
+      VPCSecurityGroups:
+        - !Ref DBEC2SecurityGroup
+      Tags:
+        - Key: ProjectName
+          Value: !Ref ProjectName
+        - Key: Name
+          Value: !Join
+            - "-"
+            - - !Ref ProjectName
+              - MariaDBDatabase
+
+  DBEC2SecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupName: !Join
+        - "-"
+        - - !Ref ProjectName
+          - DBEC2SecurityGroup
+      GroupDescription: Open database for access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 172.31.0.0/20
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: ProjectName
+          Value: !Ref ProjectName
+        - Key: Name
+          Value: !Join
+            - "-"
+            - - !Ref ProjectName
+              - DBEC2SecurityGroup
+
+  MariaDBSubnetGroup:
+    Type: "AWS::RDS::DBSubnetGroup"
+    Properties:
+      DBSubnetGroupDescription: MariaDB Subnet Group
+      DBSubnetGroupName: !Join
+        - "-"
+        - - !Ref ProjectName
+          - MariaDBSubnetGroup
+      SubnetIds: !Ref SubnetId
+      Tags:
+        - Key: ProjectName
+          Value: !Ref ProjectName
+        - Key: Name
+          Value: !Join
+            - "-"
+            - - !Ref ProjectName
+              - MariaDBSubnetGroup
+
+Outputs:
+  DBEndpoint:
+    Description: Database Host/Endpoint
+    Value: !GetAtt [MariaDBDatabase, Endpoint.Address]
